@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useState, useCallback, useRef, useMemo, memo, useEffect } from 'react';
-import dynamic from 'next/dynamic';
-import { useDropzone } from 'react-dropzone';
+import React, { useState, useCallback, useMemo, memo, useEffect } from 'react';
+import { useDropzone, FileRejection } from 'react-dropzone';
 import Tesseract from 'tesseract.js';
 import {
   Upload,
@@ -10,7 +9,6 @@ import {
   Download,
   Copy,
   Trash2,
-  Eye,
   Settings,
   Loader2,
   CheckCircle,
@@ -110,6 +108,7 @@ const ACCEPTED_FORMATS = {
 
 // Memoized image preview component for better performance
 const ImagePreview = memo(({ src, alt, className }: { src: string; alt: string; className?: string }) => (
+  // eslint-disable-next-line @next/next/no-img-element
   <img
     src={src}
     alt={alt}
@@ -165,7 +164,6 @@ export default function ImageToTextConverter() {
   const [isPasting, setIsPasting] = useState(false);
   const [hasClipboardImage, setHasClipboardImage] = useState(false);
   const [showPSMHelp, setShowPSMHelp] = useState(false);
-  const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
   // Toast notification system
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -257,7 +255,7 @@ export default function ImageToTextConverter() {
           );
           setHasClipboardImage(hasImage);
         }
-      } catch (error) {
+      } catch {
         // Ignore errors - clipboard access might be denied
         setHasClipboardImage(false);
       }
@@ -311,12 +309,12 @@ export default function ImageToTextConverter() {
     };
   }, [images]);
 
-  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
+  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
     // Handle rejected files with better error messages
     if (rejectedFiles.length > 0) {
       const errorMessages: string[] = [];
       rejectedFiles.forEach(({ file, errors }) => {
-        errors.forEach((error: any) => {
+        errors.forEach((error) => {
           if (error.code === 'file-too-large') {
             errorMessages.push(`${file.name}: File too large (max 10MB)`);
           } else if (error.code === 'file-invalid-type') {
@@ -357,7 +355,7 @@ export default function ImageToTextConverter() {
     if (validFiles.length > 1) {
       console.log(`Successfully added ${validFiles.length} images for processing`);
     }
-  }, []);
+  }, [showToast]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -432,7 +430,7 @@ export default function ImageToTextConverter() {
         image.file,
         settings.language,
         {
-          logger: (m) => {
+          logger: (m: { status: string; progress: number }) => {
             if (m.status === 'recognizing text') {
               const progress = Math.round(m.progress * 100);
               setImages(prev => prev.map(img =>
@@ -441,10 +439,7 @@ export default function ImageToTextConverter() {
                   : img
               ));
             }
-          },
-          tessedit_pageseg_mode: settings.psm,
-          // Add timeout to prevent hanging
-          timeout: 60000 // 60 seconds
+          }
         }
       );
 
@@ -525,7 +520,7 @@ export default function ImageToTextConverter() {
     try {
       await navigator.clipboard.writeText(text);
       showToast('Text copied to clipboard!', 'success');
-    } catch (error) {
+    } catch {
       try {
         // Fallback for older browsers
         const textArea = document.createElement('textarea');
@@ -535,7 +530,7 @@ export default function ImageToTextConverter() {
         document.execCommand('copy');
         document.body.removeChild(textArea);
         showToast('Text copied to clipboard!', 'success');
-      } catch (fallbackError) {
+      } catch {
         showToast('Failed to copy text to clipboard', 'error');
       }
     }
@@ -553,7 +548,7 @@ export default function ImageToTextConverter() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       showToast(`Downloaded ${filename}.txt`, 'success');
-    } catch (error) {
+    } catch {
       showToast('Failed to download file', 'error');
     }
   };
