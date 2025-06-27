@@ -24,7 +24,7 @@ interface ProcessedImage {
   file: File;
   preview: string;
   extractedText: string;
-  status: 'pending' | 'processing' | 'completed' | 'error';
+  status: 'pending' | 'processing' | 'completed' | 'error' | 'auto-process';
   progress: number;
   error?: string;
 }
@@ -167,7 +167,7 @@ export default function ImageToTextConverter() {
 
   // Toast notification system
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = Math.random().toString(36).substr(2, 9);
+    const id = Math.random().toString(36).substring(2, 11);
     const toast: Toast = { id, message, type };
     setToasts(prev => [...prev, toast]);
 
@@ -218,9 +218,9 @@ export default function ImageToTextConverter() {
             continue;
           }
 
-          // Add to images
+          // Add to images at the top
           const newImage: ProcessedImage = {
-            id: Math.random().toString(36).substr(2, 9),
+            id: Math.random().toString(36).substring(2, 11),
             file,
             preview: URL.createObjectURL(file),
             extractedText: '',
@@ -228,8 +228,17 @@ export default function ImageToTextConverter() {
             progress: 0
           };
 
-          setImages(prev => [...prev, newImage]);
-          showToast('Image pasted successfully!', 'success');
+          setImages(prev => [newImage, ...prev]);
+          showToast('Image pasted successfully! Processing...', 'success');
+
+          // Mark for auto-processing
+          setTimeout(() => {
+            setImages(prev => prev.map(img =>
+              img.id === newImage.id && img.status === 'pending'
+                ? { ...img, status: 'auto-process' }
+                : img
+            ));
+          }, 100);
         }
       }
     } catch (error) {
@@ -341,7 +350,7 @@ export default function ImageToTextConverter() {
     });
 
     const newImages: ProcessedImage[] = validFiles.map(file => ({
-      id: Math.random().toString(36).substr(2, 9),
+      id: Math.random().toString(36).substring(2, 11),
       file,
       preview: URL.createObjectURL(file),
       extractedText: '',
@@ -349,7 +358,7 @@ export default function ImageToTextConverter() {
       progress: 0
     }));
 
-    setImages(prev => [...prev, ...newImages]);
+    setImages(prev => [...newImages, ...prev]);
 
     // Show success message for batch uploads
     if (validFiles.length > 1) {
@@ -393,9 +402,9 @@ export default function ImageToTextConverter() {
           return;
         }
 
-        // Add to images
+        // Add to images at the top
         const newImage: ProcessedImage = {
-          id: Math.random().toString(36).substr(2, 9),
+          id: Math.random().toString(36).substring(2, 11),
           file,
           preview: URL.createObjectURL(file),
           extractedText: '',
@@ -403,8 +412,17 @@ export default function ImageToTextConverter() {
           progress: 0
         };
 
-        setImages(prev => [...prev, newImage]);
-        showToast('Image pasted successfully!', 'success');
+        setImages(prev => [newImage, ...prev]);
+        showToast('Image pasted successfully! Processing...', 'success');
+
+        // Mark for auto-processing
+        setTimeout(() => {
+          setImages(prev => prev.map(img =>
+            img.id === newImage.id && img.status === 'pending'
+              ? { ...img, status: 'auto-process' }
+              : img
+          ));
+        }, 100);
       }
     });
   }, [showToast]);
@@ -458,6 +476,26 @@ export default function ImageToTextConverter() {
 
       if (extractedText) {
         showToast(`Text extracted from ${image.file.name}`, 'success');
+
+        // Auto-copy extracted text to clipboard
+        try {
+          await navigator.clipboard.writeText(extractedText);
+          showToast('Text automatically copied to clipboard!', 'success');
+        } catch {
+          // Fallback for older browsers
+          try {
+            const textArea = document.createElement('textarea');
+            textArea.value = extractedText;
+            document.body.appendChild(textArea);
+            textArea.select();
+            // eslint-disable-next-line @typescript-eslint/no-deprecated
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            showToast('Text automatically copied to clipboard!', 'success');
+          } catch {
+            showToast('Text extracted but failed to copy to clipboard', 'info');
+          }
+        }
       } else {
         showToast(`No text found in ${image.file.name}`, 'info');
       }
@@ -489,6 +527,14 @@ export default function ImageToTextConverter() {
       showToast(`Failed to process ${image.file.name}: ${errorMessage}`, 'error');
     }
   };
+
+  // Auto-process images marked for auto-processing
+  useEffect(() => {
+    const autoProcessImages = images.filter(img => img.status === 'auto-process');
+    autoProcessImages.forEach(img => {
+      processImage(img.id);
+    });
+  }, [images]);
 
   const processAllImages = async () => {
     setIsProcessingAll(true);
@@ -527,6 +573,7 @@ export default function ImageToTextConverter() {
         textArea.value = text;
         document.body.appendChild(textArea);
         textArea.select();
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
         document.execCommand('copy');
         document.body.removeChild(textArea);
         showToast('Text copied to clipboard!', 'success');
@@ -740,10 +787,10 @@ export default function ImageToTextConverter() {
         <input {...getInputProps()} />
         <Upload className="w-12 h-12 mx-auto mb-4 text-gray-400" />
         <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">
-          {isDragActive ? 'Drop images here' : 'Upload Images'}
+          {isDragActive ? 'Drop & Auto-Process!' : 'Upload & Extract Text'}
         </h3>
         <p className="text-gray-500 dark:text-gray-400 mb-4">
-          Drag and drop images here, or click to select files
+          Drag, drop, or paste images for instant text extraction & auto-copy
         </p>
 
         {/* Paste Button */}
@@ -772,10 +819,10 @@ export default function ImageToTextConverter() {
           )}
           <span>
             {isPasting
-              ? 'Pasting...'
+              ? 'Pasting & Processing...'
               : hasClipboardImage
-                ? 'Paste Image Ready!'
-                : 'Paste from Clipboard'
+                ? 'Paste & Auto-Process!'
+                : 'Paste & Auto-Process'
             }
           </span>
           {hasClipboardImage && !isPasting && (
@@ -787,10 +834,10 @@ export default function ImageToTextConverter() {
           Supports: JPG, PNG, GIF, BMP, TIFF, WebP (Max 10MB each)
         </p>
         <div className="text-xs text-gray-400 dark:text-gray-500 space-y-1">
-          <p>💡 <strong>Quick Tips:</strong></p>
-          <p>• Copy an image and press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">Ctrl+V</kbd> (or <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">Cmd+V</kbd>) to paste</p>
-          <p>• Take a screenshot and paste it directly</p>
-          <p>• Copy images from websites or documents</p>
+          <p>💡 <strong>Instant Workflow:</strong></p>
+          <p>• Copy an image and press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">Ctrl+V</kbd> (or <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">Cmd+V</kbd>) → Auto-processes & copies text!</p>
+          <p>• Take a screenshot → Paste → Text ready in clipboard</p>
+          <p>• Drag & drop → Newest images appear at top</p>
         </div>
       </div>
 
@@ -882,6 +929,7 @@ export default function ImageToTextConverter() {
                   <div className="flex items-center space-x-3">
                     <div className={`w-3 h-3 rounded-full ${
                       image.status === 'pending' ? 'bg-gray-400' :
+                      image.status === 'auto-process' ? 'bg-yellow-500 animate-pulse' :
                       image.status === 'processing' ? 'bg-blue-500' :
                       image.status === 'completed' ? 'bg-green-500' :
                       'bg-red-500'
@@ -1006,6 +1054,7 @@ export default function ImageToTextConverter() {
                         <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
                         <p>
                           {image.status === 'pending' ? 'Ready to process' :
+                           image.status === 'auto-process' ? 'Auto-processing...' :
                            image.status === 'processing' ? 'Processing...' :
                            'Processing failed'}
                         </p>
