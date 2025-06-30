@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useMemo, memo, useEffect } from 'react';
 import { useDropzone, FileRejection } from 'react-dropzone';
 import Tesseract from 'tesseract.js';
+import { geminiService } from '../services/geminiService';
 import {
   Upload,
   FileText,
@@ -24,14 +25,18 @@ interface ProcessedImage {
   file: File;
   preview: string;
   extractedText: string;
-  status: 'pending' | 'processing' | 'completed' | 'error' | 'auto-process';
+  enhancedText?: string;
+  status: 'pending' | 'processing' | 'completed' | 'error' | 'auto-process' | 'enhancing';
   progress: number;
   error?: string;
+  isEnhanced?: boolean;
 }
 
 interface OCRSettings {
   language: string;
   psm: number;
+  enableGeminiEnhancement: boolean;
+  preserveFormatting: boolean;
 }
 
 interface Toast {
@@ -156,7 +161,9 @@ export default function ImageToTextConverter() {
   const [images, setImages] = useState<ProcessedImage[]>([]);
   const [settings, setSettings] = useState<OCRSettings>({
     language: 'vie',
-    psm: 3
+    psm: 3,
+    enableGeminiEnhancement: true,
+    preserveFormatting: false
   });
   const [showSettings, setShowSettings] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
@@ -477,15 +484,68 @@ export default function ImageToTextConverter() {
       if (extractedText) {
         showToast(`Text extracted from ${image.file.name}`, 'success');
 
-        // Auto-copy extracted text to clipboard
+        // Enhance with Gemini AI if enabled
+        let finalText = extractedText;
+        if (settings.enableGeminiEnhancement) {
+          try {
+            // Update status to enhancing
+            setImages(prev => prev.map(img =>
+              img.id === imageId
+                ? { ...img, status: 'enhancing' }
+                : img
+            ));
+
+            const enhancedText = await geminiService.enhanceOCRText(extractedText, {
+              language: settings.language,
+              preserveFormatting: settings.preserveFormatting
+            });
+
+            if (enhancedText && enhancedText !== extractedText) {
+              finalText = enhancedText;
+
+              // Update with enhanced text
+              setImages(prev => prev.map(img =>
+                img.id === imageId
+                  ? {
+                      ...img,
+                      enhancedText,
+                      isEnhanced: true,
+                      status: 'completed'
+                    }
+                  : img
+              ));
+
+              showToast('✨ Text enhanced with AI!', 'success');
+            } else {
+              // No enhancement needed, mark as completed
+              setImages(prev => prev.map(img =>
+                img.id === imageId
+                  ? { ...img, status: 'completed' }
+                  : img
+              ));
+            }
+          } catch (error) {
+            console.error('Gemini enhancement failed:', error);
+            showToast('AI enhancement failed, using original text', 'info');
+
+            // Fallback to original text
+            setImages(prev => prev.map(img =>
+              img.id === imageId
+                ? { ...img, status: 'completed' }
+                : img
+            ));
+          }
+        }
+
+        // Auto-copy final text to clipboard
         try {
-          await navigator.clipboard.writeText(extractedText);
+          await navigator.clipboard.writeText(finalText);
           showToast('Text automatically copied to clipboard!', 'success');
         } catch {
           // Fallback for older browsers
           try {
             const textArea = document.createElement('textarea');
-            textArea.value = extractedText;
+            textArea.value = finalText;
             document.body.appendChild(textArea);
             textArea.select();
             // eslint-disable-next-line @typescript-eslint/no-deprecated
@@ -769,6 +829,66 @@ export default function ImageToTextConverter() {
                 </div>
               )}
             </div>
+
+            {/* Gemini AI Enhancement Settings */}
+            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+              <h4 className="text-md font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
+                <span className="text-xl mr-2">🤖</span>
+                AI Enhancement (Gemini)
+              </h4>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Enable AI Enhancement
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Use Gemini AI to improve OCR accuracy and fix errors
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.enableGeminiEnhancement}
+                      onChange={(e) => setSettings(prev => ({ ...prev, enableGeminiEnhancement: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                {settings.enableGeminiEnhancement && (
+                  <div className="ml-4 pl-4 border-l-2 border-blue-200 dark:border-blue-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Preserve Original Formatting
+                        </label>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Keep line breaks and spacing from original text
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settings.preserveFormatting}
+                          onChange={(e) => setSettings(prev => ({ ...prev, preserveFormatting: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                      </label>
+                    </div>
+
+                    <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
+                      <p className="text-xs text-green-800 dark:text-green-200">
+                        <strong>🤖 AI Features:</strong> Spelling correction, grammar improvement, context understanding, and Vietnamese language optimization.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -931,9 +1051,15 @@ export default function ImageToTextConverter() {
                       image.status === 'pending' ? 'bg-gray-400' :
                       image.status === 'auto-process' ? 'bg-yellow-500 animate-pulse' :
                       image.status === 'processing' ? 'bg-blue-500' :
+                      image.status === 'enhancing' ? 'bg-purple-500 animate-pulse' :
                       image.status === 'completed' ? 'bg-green-500' :
                       'bg-red-500'
                     }`} />
+                    {image.isEnhanced && (
+                      <span className="ml-2 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200 px-2 py-1 rounded-full">
+                        ✨ AI Enhanced
+                      </span>
+                    )}
                     <h3 className="font-medium text-gray-800 dark:text-white truncate">
                       {image.file.name}
                     </h3>
@@ -952,14 +1078,16 @@ export default function ImageToTextConverter() {
                     {image.status === 'completed' && (
                       <>
                         <button
-                          onClick={() => copyToClipboard(image.extractedText)}
+                          onClick={() => copyToClipboard(image.isEnhanced ? (image.enhancedText || image.extractedText) : image.extractedText)}
                           className="p-1 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
+                          title={image.isEnhanced ? "Copy AI enhanced text" : "Copy extracted text"}
                         >
                           <Copy className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => downloadText(image.extractedText, image.file.name.split('.')[0])}
+                          onClick={() => downloadText(image.isEnhanced ? (image.enhancedText || image.extractedText) : image.extractedText, image.file.name.split('.')[0])}
                           className="p-1 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded"
+                          title={image.isEnhanced ? "Download AI enhanced text" : "Download extracted text"}
                         >
                           <Download className="w-4 h-4" />
                         </button>
@@ -1021,15 +1149,42 @@ export default function ImageToTextConverter() {
                 <div className="lg:w-1/2 p-4 border-t lg:border-t-0 lg:border-l border-gray-200 dark:border-gray-700">
                   {image.status === 'completed' && image.extractedText && (
                     <div className="h-full flex flex-col">
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Extracted Text
-                      </label>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          {image.isEnhanced ? '✨ AI Enhanced Text' : 'Extracted Text'}
+                        </label>
+                        {image.isEnhanced && image.extractedText !== image.enhancedText && (
+                          <button
+                            onClick={() => {
+                              setImages(prev => prev.map(img =>
+                                img.id === image.id
+                                  ? {
+                                      ...img,
+                                      extractedText: img.isEnhanced ? img.extractedText : (img.enhancedText || img.extractedText),
+                                      isEnhanced: !img.isEnhanced
+                                    }
+                                  : img
+                              ));
+                            }}
+                            className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
+                          >
+                            {image.isEnhanced ? 'Show Original' : 'Show Enhanced'}
+                          </button>
+                        )}
+                      </div>
                       <textarea
-                        value={image.extractedText}
+                        value={image.isEnhanced ? (image.enhancedText || image.extractedText) : image.extractedText}
                         onChange={(e) => {
+                          const newText = e.target.value;
                           setImages(prev => prev.map(img =>
                             img.id === image.id
-                              ? { ...img, extractedText: e.target.value }
+                              ? {
+                                  ...img,
+                                  ...(img.isEnhanced
+                                    ? { enhancedText: newText }
+                                    : { extractedText: newText }
+                                  )
+                                }
                               : img
                           ));
                         }}
@@ -1056,6 +1211,7 @@ export default function ImageToTextConverter() {
                           {image.status === 'pending' ? 'Ready to process' :
                            image.status === 'auto-process' ? 'Auto-processing...' :
                            image.status === 'processing' ? 'Processing...' :
+                           image.status === 'enhancing' ? '✨ AI enhancing...' :
                            'Processing failed'}
                         </p>
                       </div>
